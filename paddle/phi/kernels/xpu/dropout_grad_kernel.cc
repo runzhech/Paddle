@@ -42,11 +42,9 @@ void DropoutGradRawKernel(const Context& dev_ctx,
   const uint8_t* mask_data = mask.data<uint8_t>();
 
   xpu::ctx_guard RAII_GUARD(dev_ctx.x_context());
-  XPUType* mask_tmp_data = RAII_GUARD.alloc_l3_or_gm<XPUType>(mask.numel());
-  int r = xpu::cast<uint8_t, XPUType>(
-      dev_ctx.x_context(), mask_data, mask_tmp_data, mask.numel());
-  PADDLE_ENFORCE_XDNN_SUCCESS(r, "cast");
-
+  XPUType* mask_tmp_data = nullptr;
+  auto dev_version =
+      phi::backends::xpu::get_xpu_version(dev_ctx.GetPlace().GetDeviceId());
   if (mode != "upscale_in_train") {
     r = xpu::mul(dev_ctx.x_context(),
                  reinterpret_cast<const XPUType*>(grad_y->data<T>()),
@@ -57,9 +55,19 @@ void DropoutGradRawKernel(const Context& dev_ctx,
     return;
   }
 
-  auto version =
-      phi::backends::xpu::get_xpu_version(dev_ctx.GetPlace().GetDeviceId());
-  if (version == phi::backends::xpu::XPUVersion::XPU1) {
+  if (dev_version == phi::backends::xpu::XPUVersion::XPU3) {
+    int r = xpu::dropout_grad_v2(
+        dev_ctx.x_context(),
+        mask_data,
+        reinterpret_cast<const XPUType*>(grad_y->data<T>()),
+        reinterpret_cast<XPUType*>(grad_x->data<T>()),
+        dropout_prob,
+        grad_y->numel());
+    PADDLE_ENFORCE_XDNN_SUCCESS(r, "dropout_grad_v2");
+  } else if (dev_version == phi::backends::xpu::XPUVersion::XPU1) {
+    mask_tmp_data = RAII_GUARD.alloc_l3_or_gm<XPUType>(mask.numel());
+    int r = xpu::cast<uint8_t, XPUType>(
+        dev_ctx.x_context(), mask_data, mask_tmp_data, mask.numel());
     float scale =
         (dropout_prob == 1.0f) ? (1.0f) : (1.0f / (1.0f - dropout_prob));
     r = xpu::scale(dev_ctx.x_context(),
