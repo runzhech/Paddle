@@ -178,13 +178,16 @@ void CheckFiniteAndUnscaleKernel(const Context& dev_ctx,
   using XPUTypeFP16 = typename XPUTypeTrait<phi::dtype::float16>::Type;
 
   const MPDType* scale_data = scale.data<MPDType>();
+  int64_t num_w = xs.size();
   bool* found_inf_data = dev_ctx.template Alloc<bool>(found_infinite);
 
   // cpy to cpu
-  bool cpu_found_inf_data = false;
-
+  bool cpu_found_inf_all = false;
+  DenseTensor cpu_found_inf_data;
+  cpu_found_inf_data.Resize({num_w});
+  dev_ctx.template HostAlloc<bool>(&cpu_found_inf_data);
   // has nans or infs
-  bool has_inf_nans = false;
+  // bool has_inf_nans = false;
   MPDType cpu_scale_data;
   if (scale.place().GetType() == phi::AllocationType::XPU) {
     memory_utils::Copy(phi::CPUPlace(),
@@ -196,41 +199,59 @@ void CheckFiniteAndUnscaleKernel(const Context& dev_ctx,
   } else {
     cpu_scale_data = (*scale_data);
   }
+  auto version =
+      phi::backends::xpu::get_xpu_version(dev_ctx.GetPlace().GetDeviceId());
+  DenseTensor inf_nan_check;
+  inf_nan_check.Resize({num_w});
+  dev_ctx.template Alloc<bool>(&inf_nan_check);
+  std::vector<bool> found_inf(num_w, false);
   MPDType inverse_scale = 1.0 / cpu_scale_data;
-  for (size_t i = 0; i < xs.size(); ++i) {
+  for (int64_t i = 0; i < num_w; ++i) {
     const auto* x = xs[i];
     auto* out = outs[i];
     dev_ctx.template Alloc<T>(out);
-
-    DenseTensor inf_nan_check;
-    inf_nan_check.Resize({1});
-    dev_ctx.template Alloc<bool>(&inf_nan_check);
-
-    if (!has_inf_nans) {
-      int r =
-          xpu::check_nan_or_inf(dev_ctx.x_context(),
-                                reinterpret_cast<const XPUType*>(x->data<T>()),
-                                inf_nan_check.data<bool>(),
-                                x->numel());
-      PADDLE_ENFORCE_XDNN_SUCCESS(r, "check_nan_or_inf");
-      memory_utils::Copy(phi::CPUPlace(),
-                         &has_inf_nans,
-                         dev_ctx.GetPlace(),
-                         inf_nan_check.data<bool>(),
-                         sizeof(bool));
+    if (x->numel() < 16 * 2048 &&
+        version == phi::backends::xpu::XPUVersion::XPU3) {
+      found_inf[i] = true;
+      int r = xpu::check_finite_unscale(
+          dev_ctx.x_context(),
+          reinterpret_cast<const XPUType*>(x->data<T>()),
+          reinterpret_cast<XPUType*>(out->data<T>()),
+          x->numel(),
+          inverse_scale,
+          inf_nan_check.data<bool>() + i);
+      PADDLE_ENFORCE_XDNN_SUCCESS(r, "check_finite_and_unscale");
+      continue;
     }
+    int r =
+        xpu::check_nan_or_inf(dev_ctx.x_context(),
+                              reinterpret_cast<const XPUType*>(x->data<T>()),
+                              inf_nan_check.data<bool>() + i,
+                              x->numel());
+    PADDLE_ENFORCE_XDNN_SUCCESS(r, "check_nan_or_inf");
+  }
 
-    if (has_inf_nans) {
-      cpu_found_inf_data = true;
+  memory_utils::Copy(phi::CPUPlace(),
+                     cpu_found_inf_data.data<bool>(),
+                     dev_ctx.GetPlace(),
+                     inf_nan_check.data<bool>(),
+                     num_w * sizeof(bool));
+
+  for (int64_t i = 0; i < num_w; ++i) {
+    if (cpu_found_inf_data.data<bool>()[i]) {
+      cpu_found_inf_all = true;
       inverse_scale = 0.0;
     }
+    if (found_inf[i]) {
+      continue;
+    }
+    const auto* x = xs[i];
+    auto* out = outs[i];
 
-    auto version =
-        phi::backends::xpu::get_xpu_version(dev_ctx.GetPlace().GetDeviceId());
-    DenseTensor float_x;
-    DenseTensor float_out;
     if (std::is_same<T, phi::dtype::float16>::value &&
         (version == phi::backends::xpu::XPUVersion::XPU1)) {
+      DenseTensor float_x;
+      DenseTensor float_out;
       dev_ctx.template Alloc<MPDType>(&float_x, x->numel() * sizeof(MPDType));
       dev_ctx.template Alloc<MPDType>(&float_out,
                                       out->numel() * sizeof(MPDType));
@@ -266,10 +287,11 @@ void CheckFiniteAndUnscaleKernel(const Context& dev_ctx,
       PADDLE_ENFORCE_XDNN_SUCCESS(r, "scale");
     }
   }
+
   memory_utils::Copy(dev_ctx.GetPlace(),
                      found_inf_data,
                      phi::CPUPlace(),
-                     &cpu_found_inf_data,
+                     &cpu_found_inf_all,
                      sizeof(bool));
 }
 

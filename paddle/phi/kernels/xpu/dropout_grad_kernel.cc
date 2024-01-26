@@ -46,11 +46,11 @@ void DropoutGradRawKernel(const Context& dev_ctx,
   auto dev_version =
       phi::backends::xpu::get_xpu_version(dev_ctx.GetPlace().GetDeviceId());
   if (mode != "upscale_in_train") {
-    r = xpu::mul(dev_ctx.x_context(),
-                 reinterpret_cast<const XPUType*>(grad_y->data<T>()),
-                 reinterpret_cast<const XPUType*>(mask_tmp_data),
-                 reinterpret_cast<XPUType*>(grad_x->data<T>()),
-                 grad_y->numel());
+    int r = xpu::mul(dev_ctx.x_context(),
+                     reinterpret_cast<const XPUType*>(grad_y->data<T>()),
+                     reinterpret_cast<const XPUType*>(mask_tmp_data),
+                     reinterpret_cast<XPUType*>(grad_x->data<T>()),
+                     grad_y->numel());
     PADDLE_ENFORCE_XDNN_SUCCESS(r, "mul");
     return;
   }
@@ -85,7 +85,8 @@ void DropoutGradRawKernel(const Context& dev_ctx,
                  grad_y->numel());
     PADDLE_ENFORCE_XDNN_SUCCESS(r, "mul");
   } else {
-    r = xpu::dropout_grad(dev_ctx.x_context(),
+    int r =
+        xpu::dropout_grad(dev_ctx.x_context(),
                           reinterpret_cast<const XPUType*>(mask_tmp_data),
                           reinterpret_cast<const XPUType*>(grad_y->data<T>()),
                           reinterpret_cast<XPUType*>(grad_x->data<T>()),

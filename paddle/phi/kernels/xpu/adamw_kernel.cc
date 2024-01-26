@@ -219,19 +219,21 @@ void AdamwDenseKernel(const Context& dev_ctx,
   float* new_lr = RAII_GUARD.alloc_l3_or_gm<float>(learning_rate.numel());
   PADDLE_ENFORCE_XDNN_NOT_NULL(new_lr);
   int r = 0;
-  r = xpu::scale(dev_ctx.x_context(),
-                 learning_rate.template data<float>(),
-                 new_lr,
-                 learning_rate.numel(),
-                 false,
-                 lr_ratio,
-                 0.0f);
-  PADDLE_ENFORCE_XDNN_SUCCESS(r, "scale");
+  // r = xpu::scale(dev_ctx.x_context(),
+  //                learning_rate.template data<float>(),
+  //                new_lr,
+  //                learning_rate.numel(),
+  //                false,
+  //                lr_ratio,
+  //                0.0f);
+  // PADDLE_ENFORCE_XDNN_SUCCESS(r, "scale");
 
   // int adamw(Context* ctx, const T* g, const float* mom1, const float* mom2,
   // const T* param, const float* beta1_pow, const float* beta2_pow, const
   // float* lr, float* moment1_out, float* moment2_out, T* param_out, float
   // beta1, float beta2, float epsilon, float coeff, int64_t n);
+  float* beta1_pow_out_p = dev_ctx.template Alloc<float>(beta1_pow_out);
+  float* beta2_pow_out_p = dev_ctx.template Alloc<float>(beta2_pow_out);
   r = xpu::adamw(
       dev_ctx.x_context(),
       reinterpret_cast<const XPUType*>(grad.template data<T>()),
@@ -250,7 +252,10 @@ void AdamwDenseKernel(const Context& dev_ctx,
       beta2_,
       epsilon_,
       coeff,
-      param.numel());
+      param.numel(),
+      lr_ratio,
+      beta1_pow_out_p,
+      beta2_pow_out_p);
   PADDLE_ENFORCE_XDNN_SUCCESS(r, "adamw");
 
   if (moment_in_fp16) {
@@ -333,26 +338,27 @@ void AdamwDenseKernel(const Context& dev_ctx,
       dev_ctx.template HostAlloc<float>(beta2_pow_out)[0] =
           beta2_ * beta2_pow_p[0];
       xpu_wait(dev_ctx.x_context()->xpu_stream);
-    } else {  // update in  xpu
-      float* beta1_pow_out_p = dev_ctx.template Alloc<float>(beta1_pow_out);
-      float* beta2_pow_out_p = dev_ctx.template Alloc<float>(beta2_pow_out);
-      int r = xpu::scale(dev_ctx.x_context(),
-                         beta1_pow_ptr,
-                         beta1_pow_out_p,
-                         beta1_pow.numel(),
-                         false,
-                         beta1_,
-                         0.0f);
-      PADDLE_ENFORCE_XDNN_SUCCESS(r, "scale");
-      r = xpu::scale(dev_ctx.x_context(),
-                     beta2_pow_ptr,
-                     beta2_pow_out_p,
-                     beta2_pow.numel(),
-                     false,
-                     beta2_,
-                     0.0f);
-      PADDLE_ENFORCE_XDNN_SUCCESS(r, "scale");
     }
+    //  else {  // update in  xpu
+    //   float* beta1_pow_out_p = dev_ctx.template Alloc<float>(beta1_pow_out);
+    //   float* beta2_pow_out_p = dev_ctx.template Alloc<float>(beta2_pow_out);
+    //   int r = xpu::scale(dev_ctx.x_context(),
+    //                      beta1_pow_ptr,
+    //                      beta1_pow_out_p,
+    //                      beta1_pow.numel(),
+    //                      false,
+    //                      beta1_,
+    //                      0.0f);
+    //   PADDLE_ENFORCE_XDNN_SUCCESS(r, "scale");
+    //   r = xpu::scale(dev_ctx.x_context(),
+    //                  beta2_pow_ptr,
+    //                  beta2_pow_out_p,
+    //                  beta2_pow.numel(),
+    //                  false,
+    //                  beta2_,
+    //                  0.0f);
+    //   PADDLE_ENFORCE_XDNN_SUCCESS(r, "scale");
+    // }
   }
 }
 

@@ -25,10 +25,20 @@ void SquaredL2NormKernel(const Context& dev_ctx,
                          DenseTensor* out) {
   T* data = dev_ctx.template Alloc<T>(out);
   using XPUType = typename XPUTypeTrait<T>::Type;
-
+  using XPUTypeFP16 = typename XPUTypeTrait<phi::dtype::float16>::Type;
   xpu::ctx_guard RAII_GUARD(dev_ctx.x_context());
   float* y_for_xdnn = nullptr;
-  if (std::is_same<T, float>::value) {
+  if (std::is_same<T, phi::dtype::float16>::value) {
+    y_for_xdnn = RAII_GUARD.alloc_l3_or_gm<float>(1);
+    int r = xpu::square_reduce_sum<XPUTypeFP16, XPUTypeFP16>(
+        dev_ctx.x_context(),
+        reinterpret_cast<const XPUTypeFP16*>(x.data<T>()),
+        reinterpret_cast<XPUTypeFP16*>(y_for_xdnn),
+        x.numel(),
+        false);
+    PADDLE_ENFORCE_XDNN_SUCCESS(r, "square_reduce_sum");
+    return;
+  } else if (std::is_same<T, float>::value) {
     y_for_xdnn = reinterpret_cast<float*>(data);
   } else {
     y_for_xdnn = RAII_GUARD.alloc_l3_or_gm<float>(1);
@@ -36,7 +46,7 @@ void SquaredL2NormKernel(const Context& dev_ctx,
 
   // int square_reduce_sum(Context* ctx, const T* x, float* y, int64_t len, bool
   // is_sqrt=false);
-  int r = xpu::square_reduce_sum<XPUType>(
+  int r = xpu::square_reduce_sum<XPUType, float>(
       dev_ctx.x_context(),
       reinterpret_cast<const XPUType*>(x.data<T>()),
       y_for_xdnn,

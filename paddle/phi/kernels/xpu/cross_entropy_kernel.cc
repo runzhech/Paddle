@@ -69,6 +69,37 @@ void CrossEntropyWithSoftmaxKernel(const Context& dev_ctx,
     return;
   }
 
+  if (phi::backends::xpu::get_xpu_version(dev_ctx.GetPlace().GetDeviceId()) ==
+          phi::backends::xpu::XPUVersion::XPU3 &&
+      !soft_label) {
+    const int* labels_int_ptr = nullptr;
+    if (labels.dtype() == DataType::INT32) {
+      labels_int_ptr = labels.data<int32_t>();
+    } else if (labels.dtype() == DataType::INT64) {
+      xpu::ctx_guard RAII_GUARD(dev_ctx.x_context());
+      int* labels_int_ptr_l3 =
+          RAII_GUARD.alloc_l3_or_gm<int32_t>(labels.numel());
+      PADDLE_ENFORCE_XDNN_NOT_NULL(labels_int_ptr_l3);
+
+      r = xpu::cast<int64_t, int32_t>(dev_ctx.x_context(),
+                                      labels.data<int64_t>(),
+                                      labels_int_ptr_l3,
+                                      labels.numel());
+      PADDLE_ENFORCE_XDNN_SUCCESS(r, "cast");
+      labels_int_ptr = labels_int_ptr_l3;
+    }
+    r = xpu::hard_softmax_with_cross_entropy<XPUType, int>(dev_ctx.x_context(),
+                                                           logits_data,
+                                                           labels_int_ptr,
+                                                           softmax_data,
+                                                           loss_data,
+                                                           ignore_index,
+                                                           n,
+                                                           d);
+    PADDLE_ENFORCE_XDNN_SUCCESS(r, "hard_softmax_with_cross_entropy");
+    return;
+  }
+
   int len = logits.numel();
   T* clip_logits = RAII_GUARD.alloc_l3_or_gm<T>(len);
   PADDLE_ENFORCE_XDNN_NOT_NULL(clip_logits);
