@@ -58,10 +58,10 @@ XPUFCCalcType FCCalcType() {
   } else if ((std::is_same<phi::dtype::bfloat16, T>::value ||
               std::is_same<XPUTypeBF16, T>::value) ||
              (std::is_same<float, T>::value &&
-              std::getenv("XPU_PADDLE_FC_TF32") != nullptr)) {
-    return XPUFCCalcType::FC_TF32;
+              std::getenv("XPU_PADDLE_FC_INT16") != nullptr)) {
+    return XPUFCCalcType::FC_INT16;
   }
-  return XPUFCCalcType::FC_INT16;
+  return XPUFCCalcType::FC_TF32;
 }
 
 struct XpuFcInfo {
