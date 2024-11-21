@@ -22,8 +22,10 @@
 #include "paddle/phi/backends/xpu/xpu_info.h"
 #include "paddle/phi/kernels/funcs/blas/blas.h"
 
+#ifdef PADDLE_WITH_XPU_XRE5
 #include "xblas/cublasLt.h"
 namespace xblas = baidu::xpu::xblas;
+#endif
 
 namespace phi {
 
@@ -55,9 +57,7 @@ XPUFCCalcType FCCalcType() {
     return XPUFCCalcType::FC_FLOAT;
   } else if (std::getenv("XPU_PADDLE_FC_INT32_WITH_LL") != nullptr) {
     return XPUFCCalcType::FC_INT32_WITH_LL;
-  } else if ((std::is_same<phi::dtype::bfloat16, T>::value ||
-              std::is_same<XPUTypeBF16, T>::value) ||
-             (std::is_same<float, T>::value &&
+  } else if ((std::is_same<float, T>::value &&
               std::getenv("XPU_PADDLE_FC_INT16") != nullptr)) {
     return XPUFCCalcType::FC_INT16;
   }
