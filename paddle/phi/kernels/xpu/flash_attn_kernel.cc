@@ -20,7 +20,7 @@
 #include "xfa/flash_api.h"
 #endif
 namespace phi {
-
+#ifdef PADDLE_WITH_XPU_XRE5
 template <typename T, typename Context>
 void FlashAttnKernelBase(const Context& ctx,
                          const DenseTensor& q,
@@ -154,6 +154,25 @@ void FlashAttnKernelBase(const Context& ctx,
       );
   PADDLE_ENFORCE_XDNN_SUCCESS(r, "mha_varlen_fwd");
 }
+#else
+// use a template specialization to avoid the compilation error of r200 when
+// dtype is bfloat16
+template <typename T>
+class XPUTypeUnpadded {
+ public:
+  using Type = T;
+};
+template <>
+class XPUTypeUnpadded<phi::dtype::float16> {
+ public:
+  using Type = XPUTypeTrait<phi::dtype::float16>::Type;
+};
+template <>
+class XPUTypeUnpadded<phi::dtype::bfloat16> {
+ public:
+  using Type = XPUTypeTrait<phi::dtype::float16>::Type;
+};
+#endif
 
 template <typename T, typename Context>
 void FlashAttnUnpaddedKernel(
@@ -212,7 +231,11 @@ void FlashAttnUnpaddedKernel(
     }
   }
 
-  using XPUType = typename XPUTypeTrait<T>::Type;
+  using XPUType = typename XPUTypeUnpadded<T>::Type;
+  if (std::is_same<T, phi::dtype::bfloat16>::value) {
+    PADDLE_THROW(common::errors::Unimplemented(
+        "xpu2 unsupported bfloat16 type in flash attention op."));
+  }
   auto* out_data = reinterpret_cast<XPUType*>(ctx.template Alloc<T>(out));
   const XPUType* q_data = reinterpret_cast<const XPUType*>(q.data<T>());
   const XPUType* k_data = reinterpret_cast<const XPUType*>(k.data<T>());

@@ -21,6 +21,7 @@
 #include "xfa/flash_api.h"
 #endif
 namespace phi {
+#ifdef PADDLE_WITH_XPU_XRE5
 template <typename T, typename Context>
 void FlashAttnGradKernelBase(const Context& ctx,
                              const DenseTensor& q,
@@ -167,6 +168,7 @@ void FlashAttnGradKernelBase(const Context& ctx,
   );
   PADDLE_ENFORCE_XDNN_SUCCESS(r, "mha_varlen_bwd");
 }
+#endif
 
 template <typename T, typename Context>
 void FlashAttnUnpaddedGradKernel(const Context& ctx,
@@ -319,6 +321,7 @@ PD_REGISTER_KERNEL(flash_attn_unpadded_grad,
                    XPU,
                    ALL_LAYOUT,
                    phi::FlashAttnUnpaddedGradKernel,
+                   float,
                    phi::dtype::float16,
                    phi::dtype::bfloat16) {
   kernel->InputAt(3).SetBackend(phi::Backend::CPU);          // cu_seqlens_q
