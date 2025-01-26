@@ -82,6 +82,46 @@ AUTO_PARALLEL_COND_TEMPLATE = """
   }}
 """
 
+NCCL_COMMCONTEXT_INIT = """
+#if defined(PADDLE_WITH_NCCL) || defined(PADDLE_WITH_RCCL)
+  const auto & comm_context_manager_ = phi::distributed::CommContextManager::GetInstance();
+  if (nranks > 1 && !comm_context_manager_.Has(std::to_string(ring_id))) {{
+    auto store = phi::distributed::CreateOrGetGlobalTCPStore();
+    phi::distributed::CommContextManager::CreateNCCLCommContext(
+            store, std::to_string(ring_id), rank, nranks);
+  }}
+#endif
+"""
+
+SET_NCCL_COMMCONTEXT = """
+#if defined(PADDLE_WITH_NCCL) || defined(PADDLE_WITH_RCCL)
+  const auto & comm_context_manager = phi::distributed::CommContextManager::GetInstance();
+  phi::distributed::NCCLCommContext* comm_context = nullptr;
+  if (comm_context_manager.Has(std::to_string(ring_id))) {{
+    comm_context = static_cast<phi::distributed::NCCLCommContext *>(
+          comm_context_manager.Get(std::to_string(ring_id)));
+    PADDLE_ENFORCE_NE(
+        comm_context,
+        nullptr,
+        common::errors::Unavailable(
+            "NCCLCommContext is nullptr, collective op should "
+            "has ring_id(%d) attr.",
+            std::to_string(ring_id)));
+    if (!comm_context->GetDevContext() || !comm_context->GetDevContext()->GetCommContext())
+    {{
+        auto kernel_res = phi::KernelFactory::Instance().SelectKernelOrThrowError(
+            "{}", {{kernel_backend, kernel_layout, kernel_data_type}}, true);
+        if (FLAGS_low_precision_op_list) {{
+        phi::KernelFactory::Instance().AddToLowPrecisionKernelList("{}", kernel_data_type);
+        }}
+        Backend act_kernel_backend = kernel_res.has_fallback_cpu ? Backend::CPU : kernel_backend;
+        auto* dev_context = GetDeviceContextByBackend(act_kernel_backend);
+        dev_context->SetCommContext(comm_context);
+    }}
+  }}
+#endif
+"""
+
 # 1. InferSPMD
 SINGLE_DIST_META_IN_TEMPLATE = """
     auto meta_dist_input_{name} = MakeDistMetaTensor(*{name}.impl());"""
@@ -861,6 +901,24 @@ class DistForwardAPI(ForwardAPI):
             input_args=input_args, mesh=mesh, kernel_code=kernel_select_code
         )
 
+        # Current initialization only consider the case where the parameters of op contain ring_id, nranks and rank.
+        # Other cases will be addressed in the future.
+        if 'ring_id' in self.attrs['names']:
+            if (
+                'rank' in self.attrs['names']
+                and 'nranks' in self.attrs['names']
+            ):
+                if_condition_code = (
+                    if_condition_code
+                    + '\n'
+                    + self.generate_nccl_commcontext_init_code()
+                )
+            if_condition_code = (
+                if_condition_code
+                + '\n'
+                + self.generate_set_nccl_commcontext_code()
+            )
+
         return kernel_key_item_init + if_condition_code
 
     def generate_specialized_infer_spmd_code(self) -> str:
@@ -1321,6 +1379,12 @@ class DistForwardAPI(ForwardAPI):
         return KERNEL_SELECTION_TEMPLATE.format(
             self.api, self.kernel['func'][0], self.kernel['func'][0]
         )
+
+    def generate_nccl_commcontext_init_code(self) -> str:
+        return NCCL_COMMCONTEXT_INIT.format(self.kernel['func'][0])
+
+    def generate_set_nccl_commcontext_code(self) -> str:
+        return SET_NCCL_COMMCONTEXT.format(self.kernel['func'][0], self.api)
 
     def generate_reshard_input_code(self) -> str:
         input_reshard_code = ""
