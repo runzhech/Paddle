@@ -3386,7 +3386,7 @@
 
 - op : meshgrid
   args : (Tensor[] inputs)
-  output : Tensor[]{inputs.size()}
+  output : Tensor[](out){inputs.size()}
   infer_meta :
     func : MeshgridInferMeta
   kernel :

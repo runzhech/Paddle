@@ -21,6 +21,7 @@ from api_base import PREFIX_TENSOR_NAME
 from api_gen import (
     ForwardAPI,
     api_namespace,
+    backward_api_black_list,
     declare_extension_api,
     header_include,
     source_include,
@@ -290,7 +291,7 @@ SINGLE_GLOBAL_META_OUT_DECL_TEMPLATE = """
     phi::MetaTensor meta_{}({});"""
 VECTOR_GLOBAL_META_OUT_DECL_TEMPLATE = """
     std::vector<phi::MetaTensor> {name}_meta_vec;
-    for (auto tmp : {name}) {{
+    for (phi::distributed::DistTensor* tmp : {name}) {{
       {name}_meta_vec.emplace_back(phi::MetaTensor(tmp));
     }}
     std::vector<phi::MetaTensor*> {name}_meta_ptr_vec({name}.size());
@@ -1075,6 +1076,11 @@ class DistForwardAPI(ForwardAPI):
                     output_creation_code += VECTOR_OUT_CREATION_TEMPLATE.format(
                         dist_output_arg
                     )
+            else:
+                raise ValueError(
+                    f"{self.api} : Output of infer_spmd error : {self.outputs['types'][0]} type is not supported."
+                )
+
         elif output_num > 1:
             # api output generate
             if self.inplace_flag:
@@ -1099,6 +1105,7 @@ class DistForwardAPI(ForwardAPI):
             for i, out_type in enumerate(self.outputs['types']):
                 self.dist_output_args.append(f'dist_out_{i}')
                 self.dense_output_args.append(f'dense_out_{i}')
+
                 get_out_code = f"std::get<{i}>(api_output)"
                 if out_type == 'Tensor':
                     if self.is_inplace_and_optional_output(i):
@@ -1184,6 +1191,11 @@ class DistForwardAPI(ForwardAPI):
                                     in_name=get_out_code,
                                 )
                             )
+                else:
+                    raise ValueError(
+                        f"{self.api} : Output error: {out_type}"
+                        + " is not supported yet."
+                    )
         else:
             raise ValueError(
                 f"{self.api} : Output error: the output should not be empty."
@@ -2037,6 +2049,8 @@ def generate_api(
 
     for api in apis:
         dist_forward_api = DistForwardAPI(api)
+        if dist_forward_api.api in backward_api_black_list:
+            continue
         if dist_forward_api.is_dygraph_api and not is_fused_ops_yaml:
             dist_forward_api.is_dygraph_api = False
 
@@ -2088,7 +2102,6 @@ def main():
     )
 
     options = parser.parse_args()
-
     api_yaml_path = options.api_yaml_path
     is_fused_ops_yaml = options.is_fused_ops_yaml
     header_file_path = options.api_header_path
